@@ -3,11 +3,14 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
   FileCode2,
   Folder,
+  Minimize2,
   RefreshCw,
   Search,
   ShieldCheck,
+  X,
 } from 'lucide-react';
 import { evaluateModelFit } from '../../shared/constants.js';
 import type { FileTreeNode, ModelFitLevel } from '../../shared/types.js';
@@ -16,6 +19,17 @@ import { useWorkbenchStore } from '../store/useWorkbenchStore.js';
 function getLeafPaths(node: FileTreeNode): string[] {
   if (node.type === 'file') return [node.path];
   return (node.children ?? []).flatMap(getLeafPaths);
+}
+
+function collectAllDirPaths(nodes: FileTreeNode[]): string[] {
+  const dirs: string[] = [];
+  for (const n of nodes) {
+    if (n.type === 'directory') {
+      dirs.push(n.path);
+      if (n.children) dirs.push(...collectAllDirPaths(n.children));
+    }
+  }
+  return dirs;
 }
 
 function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
@@ -101,6 +115,18 @@ export function Step1SelectFiles() {
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    if (fileTree.length === 0) return;
+    setExpandedDirs((prev) => {
+      if (prev.size > 0) return prev;
+      const topDirs = fileTree
+        .filter((n) => n.type === 'directory')
+        .slice(0, 6)
+        .map((n) => n.path);
+      return new Set(topDirs);
+    });
+  }, [fileTree]);
+
   const filteredTree = useMemo(() => filterTree(fileTree, searchQuery), [fileTree, searchQuery]);
 
   const tokenMap = useMemo(() => {
@@ -122,6 +148,24 @@ export function Step1SelectFiles() {
   }, [selectedPaths, tokenMap]);
 
   const modelFit = useMemo(() => evaluateModelFit(selectedTokens), [selectedTokens]);
+
+  const selectedFolderChips = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const p of selectedPaths) {
+      const idx = p.lastIndexOf('/');
+      const folder = idx === -1 ? '(root)' : p.slice(0, idx);
+      const list = groups.get(folder) ?? [];
+      list.push(p);
+      groups.set(folder, list);
+    }
+    return Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length);
+  }, [selectedPaths]);
+
+  const removeFolderGroup = (paths: string[]) => {
+    const next = new Set(selectedPaths);
+    for (const p of paths) next.delete(p);
+    useWorkbenchStore.setState({ selectedPaths: next });
+  };
 
   const toggleExpand = (dirPath: string) => {
     setExpandedDirs((prev) => {
@@ -229,6 +273,22 @@ export function Step1SelectFiles() {
               </button>
               <button
                 type="button"
+                onClick={() => setExpandedDirs(new Set(collectAllDirPaths(fileTree)))}
+                title="Expand all folders"
+                className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpandedDirs(new Set())}
+                title="Collapse all folders"
+                className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => void refreshTree()}
                 title="Refresh files from disk"
                 className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
@@ -286,6 +346,31 @@ export function Step1SelectFiles() {
               Estimated size: ~{selectedTokens.toLocaleString()} tokens
             </p>
           </div>
+
+          {selectedFolderChips.length > 0 && (
+            <div className="space-y-2 pt-3 border-t border-[var(--border-default)]">
+              <p className="text-xs font-medium text-[var(--text-secondary)]">Selected Folders</p>
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                {selectedFolderChips.map(([folder, paths]) => (
+                  <span
+                    key={folder}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--bg-subtle)] border border-[var(--border-default)] text-[11px] font-mono"
+                  >
+                    <span className="truncate max-w-[160px]">{folder}</span>
+                    <span className="text-[var(--text-muted)]">({paths.length})</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFolderGroup(paths)}
+                      className="text-[var(--text-muted)] hover:text-red-500 cursor-pointer"
+                      title={`Remove ${folder}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2.5 pt-3 border-t border-[var(--border-default)]">
             <p className="text-xs font-medium text-[var(--text-secondary)]">Will this fit in my AI chat?</p>

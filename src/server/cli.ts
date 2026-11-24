@@ -93,6 +93,9 @@ async function main(): Promise<void> {
     (rawText) => {
       const parseResult = parseAndPreviewPatch(serverState.repoPath, rawText);
       if (parseResult) {
+        if (parseResult.retryPrompt) {
+          watcher.ignoreText(parseResult.retryPrompt);
+        }
         broadcast({ type: 'PATCH_DETECTED', payload: { parseResult } });
       }
     }

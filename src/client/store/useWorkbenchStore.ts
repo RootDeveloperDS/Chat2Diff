@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { diffLines } from 'diff';
 import type {
   FileTreeNode,
   PackResponse,
@@ -16,6 +17,8 @@ export interface ToastMessage {
   tone: 'success' | 'error' | 'info';
   text: string;
   undoSnapshotId?: string;
+  actionLabel?: string;
+  actionStep?: WizardStep;
 }
 
 function collectLeafFiles(nodes: FileTreeNode[]): FileTreeNode[] {
@@ -25,6 +28,58 @@ function collectLeafFiles(nodes: FileTreeNode[]): FileTreeNode[] {
     else if (n.children) out.push(...collectLeafFiles(n.children));
   }
   return out;
+}
+
+function getSelectionStorageKey(repoPath: string): string {
+  return `chat2diff_selection::${repoPath.toLowerCase()}`;
+}
+
+function loadSavedSelection(repoPath: string): string[] {
+  if (typeof window === 'undefined' || !repoPath) return [];
+  try {
+    const raw = localStorage.getItem(getSelectionStorageKey(repoPath));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSelection(repoPath: string, paths: Set<string>): void {
+  if (typeof window === 'undefined' || !repoPath) return;
+  try {
+    localStorage.setItem(getSelectionStorageKey(repoPath), JSON.stringify(Array.from(paths)));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+const PATCH_FORMAT_STORAGE_KEY = 'chat2diff_patch_format';
+const REDACT_SECRETS_STORAGE_KEY = 'chat2diff_redact_secrets';
+
+function loadSavedPatchFormat(): PatchFormat | null {
+  if (typeof window === 'undefined') return null;
+  const val = localStorage.getItem(PATCH_FORMAT_STORAGE_KEY);
+  return val === 'unified_diff' || val === 'search_replace' ? val : null;
+}
+
+function loadSavedRedactSecrets(): boolean {
+  if (typeof window === 'undefined') return true;
+  const val = localStorage.getItem(REDACT_SECRETS_STORAGE_KEY);
+  return val === null ? true : val === 'true';
+}
+
+function countDiffLines(original: string, proposed: string): { additions: number; deletions: number } {
+  const parts = diffLines(original, proposed);
+  let additions = 0;
+  let deletions = 0;
+  for (const p of parts) {
+    const count = p.count ?? 0;
+    if (p.added) additions += count;
+    if (p.removed) deletions += count;
+  }
+  return { additions, deletions };
 }
 
 interface WorkbenchStore {
@@ -67,6 +122,8 @@ interface WorkbenchStore {
   rawPasteInput: string;
   activeParse: ParsePatchResponse | null;
   checkedApplyPaths: Set<string>;
+  appliedFilePaths: Set<string>;
+  appliedFileSnapshots: Record<string, string>;
   selectedPreviewFile: string | null;
   hasUnreadPatch: boolean;
   isParsing: boolean;
@@ -81,11 +138,16 @@ interface WorkbenchStore {
   setHistoryDrawerOpen: (open: boolean) => void;
   toggleDarkMode: () => void;
   setSocketConnected: (connected: boolean) => void;
-  pushToast: (tone: ToastMessage['tone'], text: string, undoSnapshotId?: string) => void;
+  pushToast: (
+    tone: ToastMessage['tone'],
+    text: string,
+    undoSnapshotId?: string,
+    action?: { label: string; step: WizardStep }
+  ) => void;
   dismissToast: (id: string) => void;
 
   bootstrap: () => Promise<void>;
-  refreshTree: () => Promise<void>;
+  refreshTree: (silent?: boolean) => Promise<void>;
   refreshHistory: () => Promise<void>;
   switchRepo: (repoPath: string) => Promise<void>;
   toggleWatcher: () => Promise<void>;
@@ -109,7 +171,10 @@ interface WorkbenchStore {
   toggleApplyFile: (filePath: string) => void;
   setAllReadyApply: (checked: boolean) => void;
   setSelectedPreviewFile: (filePath: string) => void;
-  applyCheckedFiles: () => Promise<void>;
+  clearActiveParse: () => void;
+  applyCheckedFiles: (customContents?: Record<string, string>) => Promise<void>;
+  applySingleFile: (filePath: string, customContent?: string) => Promise<void>;
+  applyPartialFileContent: (filePath: string, mergedContent: string) => Promise<void>;
   undoSnapshotById: (snapshotId: string) => Promise<void>;
 }
 
@@ -150,14 +215,16 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   preset: 'bug_fix',
   taskDescription: '',
   errorLog: '',
-  patchFormatPreference: 'search_replace',
-  redactSecrets: true,
+  patchFormatPreference: loadSavedPatchFormat() ?? 'search_replace',
+  redactSecrets: loadSavedRedactSecrets(),
   lastPackResult: null,
   isPacking: false,
 
   rawPasteInput: '',
   activeParse: null,
   checkedApplyPaths: new Set<string>(),
+  appliedFilePaths: new Set<string>(),
+  appliedFileSnapshots: {},
   selectedPreviewFile: null,
   hasUnreadPatch: false,
   isParsing: false,
@@ -187,12 +254,24 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   setSocketConnected: (connected) => set({ socketConnected: connected }),
 
-  pushToast: (tone, text, undoSnapshotId) => {
+  pushToast: (tone, text, undoSnapshotId, action) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, tone, text, undoSnapshotId }] }));
+    set((s) => ({
+      toasts: [
+        ...s.toasts.slice(-3),
+        {
+          id,
+          tone,
+          text,
+          undoSnapshotId,
+          actionLabel: action?.label,
+          actionStep: action?.step,
+        },
+      ],
+    }));
     window.setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, undoSnapshotId ? 9000 : 4500);
+    }, undoSnapshotId || action ? 9000 : 4500);
   },
 
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -200,6 +279,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   bootstrap: async () => {
     try {
       const ws = await api.getWorkspace();
+      const savedFmt = loadSavedPatchFormat();
       set({
         repoPath: ws.repoPath,
         repoName: ws.repoName,
@@ -207,6 +287,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         gitBranch: ws.gitBranch,
         clipboardWatchEnabled: ws.clipboardWatchEnabled,
         clipboardAvailable: ws.clipboardAvailable,
+        patchFormatPreference: savedFmt ?? ws.defaultPatchFormat ?? get().patchFormatPreference,
         recentRepos: ws.recentRepos,
       });
       await Promise.all([get().refreshTree(), get().refreshHistory()]);
@@ -215,12 +296,15 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     }
   },
 
-  refreshTree: async () => {
-    set({ isLoadingTree: true });
+  refreshTree: async (silent = false) => {
+    if (!silent) set({ isLoadingTree: true });
     try {
       const data = await api.getFileTree();
       const validPaths = new Set(collectLeafFiles(data.tree).map((f) => f.path));
-      const kept = new Set(Array.from(get().selectedPaths).filter((p) => validPaths.has(p)));
+      const currentSelected = get().selectedPaths;
+      const source =
+        currentSelected.size > 0 ? Array.from(currentSelected) : loadSavedSelection(get().repoPath);
+      const kept = new Set(source.filter((p) => validPaths.has(p)));
       set({
         fileTree: data.tree,
         totalFiles: data.totalFiles,
@@ -252,6 +336,8 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         selectedPaths: new Set(),
         activeParse: null,
         checkedApplyPaths: new Set(),
+        appliedFilePaths: new Set(),
+        appliedFileSnapshots: {},
         selectedPreviewFile: null,
         lastPackResult: null,
         activeStep: 1,
@@ -292,20 +378,36 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       }
     }
     set({ selectedPaths: next });
+    saveSelection(get().repoPath, next);
   },
 
   selectAllFiles: () => {
     const all = collectLeafFiles(get().fileTree).map((f) => f.path);
-    set({ selectedPaths: new Set(all) });
+    const next = new Set(all);
+    set({ selectedPaths: next });
+    saveSelection(get().repoPath, next);
   },
 
-  clearSelection: () => set({ selectedPaths: new Set() }),
+  clearSelection: () => {
+    set({ selectedPaths: new Set() });
+    saveSelection(get().repoPath, new Set());
+  },
 
   setPreset: (preset) => set({ preset }),
   setTaskDescription: (taskDescription) => set({ taskDescription }),
   setErrorLog: (errorLog) => set({ errorLog }),
-  setPatchFormat: (patchFormatPreference) => set({ patchFormatPreference }),
-  setRedactSecrets: (redactSecrets) => set({ redactSecrets }),
+  setPatchFormat: (patchFormatPreference) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(PATCH_FORMAT_STORAGE_KEY, patchFormatPreference);
+    }
+    set({ patchFormatPreference });
+  },
+  setRedactSecrets: (redactSecrets) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(REDACT_SECRETS_STORAGE_KEY, String(redactSecrets));
+    }
+    set({ redactSecrets });
+  },
 
   packContext: async (mode) => {
     const state = get();
@@ -347,13 +449,17 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     set({
       activeParse: parse,
       checkedApplyPaths: new Set(readyPaths),
+      appliedFilePaths: new Set<string>(),
+      appliedFileSnapshots: {},
       selectedPreviewFile: firstFile,
       hasUnreadPatch: fromClipboard && !isOnStep3,
     });
     if (fromClipboard) {
       get().pushToast(
         'info',
-        `Detected AI changes for ${parse.summary.totalFiles} file(s). Open Step 3 to review.`
+        `Detected AI changes for ${parse.summary.totalFiles} file(s).`,
+        undefined,
+        !isOnStep3 ? { label: 'Review Now', step: 3 } : undefined
       );
     }
   },
@@ -389,24 +495,61 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       set({ checkedApplyPaths: new Set() });
       return;
     }
+    const applied = get().appliedFilePaths;
     set({
       checkedApplyPaths: new Set(
-        parse.files.filter((f) => f.status === 'ready').map((f) => f.filePath)
+        parse.files
+          .filter((f) => f.status === 'ready' && !applied.has(f.filePath))
+          .map((f) => f.filePath)
       ),
     });
   },
 
   setSelectedPreviewFile: (filePath) => set({ selectedPreviewFile: filePath }),
 
-  applyCheckedFiles: async () => {
-    const { activeParse, checkedApplyPaths } = get();
-    if (!activeParse || checkedApplyPaths.size === 0) return;
+  clearActiveParse: () =>
+    set({
+      activeParse: null,
+      checkedApplyPaths: new Set(),
+      appliedFilePaths: new Set(),
+      appliedFileSnapshots: {},
+      selectedPreviewFile: null,
+    }),
+
+  applyCheckedFiles: async (customContents) => {
+    const { activeParse, checkedApplyPaths, appliedFilePaths, appliedFileSnapshots } = get();
+    const targetPaths = Array.from(checkedApplyPaths).filter((p) => !appliedFilePaths.has(p));
+    if (!activeParse || targetPaths.length === 0) return;
 
     set({ isApplying: true });
     try {
-      const res = await api.applyPatch(activeParse.parseId, Array.from(checkedApplyPaths));
-      set({ isApplying: false, activeParse: null, checkedApplyPaths: new Set(), rawPasteInput: '' });
-      await Promise.all([get().refreshTree(), get().refreshHistory()]);
+      const res = await api.applyPatch(activeParse.parseId, targetPaths, customContents);
+      const appliedSet = new Set(res.appliedFiles);
+      const nextApplied = new Set(appliedFilePaths);
+      const nextSnapshots = { ...appliedFileSnapshots };
+      const nextChecked = new Set(checkedApplyPaths);
+
+      const updatedFiles = activeParse.files.map((f) => {
+        if (!appliedSet.has(f.filePath)) return f;
+        nextChecked.delete(f.filePath);
+        const override = customContents?.[f.filePath];
+        if (override !== undefined && override !== f.proposedContent) {
+          const stats = countDiffLines(override, f.proposedContent);
+          return { ...f, originalContent: override, ...stats };
+        }
+        nextApplied.add(f.filePath);
+        nextSnapshots[f.filePath] = res.snapshotId;
+        return f;
+      });
+
+      set({
+        isApplying: false,
+        activeParse: { ...activeParse, files: updatedFiles },
+        appliedFilePaths: nextApplied,
+        appliedFileSnapshots: nextSnapshots,
+        checkedApplyPaths: nextChecked,
+      });
+      await Promise.all([get().refreshTree(true), get().refreshHistory()]);
       get().pushToast(
         'success',
         `Applied changes to ${res.appliedFiles.length} file(s).`,
@@ -418,11 +561,101 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     }
   },
 
+  applySingleFile: async (filePath, customContent) => {
+    const { activeParse, appliedFilePaths } = get();
+    if (!activeParse || appliedFilePaths.has(filePath)) return;
+    const file = activeParse.files.find((f) => f.filePath === filePath);
+    if (!file || file.status !== 'ready') return;
+
+    if (customContent !== undefined && customContent !== file.proposedContent) {
+      await get().applyPartialFileContent(filePath, customContent);
+      return;
+    }
+
+    set({ isApplying: true });
+    try {
+      const res = await api.applyPatch(activeParse.parseId, [filePath]);
+      const nextApplied = new Set(get().appliedFilePaths);
+      nextApplied.add(filePath);
+      const nextChecked = new Set(get().checkedApplyPaths);
+      nextChecked.delete(filePath);
+      const nextSnapshots = { ...get().appliedFileSnapshots, [filePath]: res.snapshotId };
+
+      set({
+        isApplying: false,
+        appliedFilePaths: nextApplied,
+        appliedFileSnapshots: nextSnapshots,
+        checkedApplyPaths: nextChecked,
+      });
+      await Promise.all([get().refreshTree(true), get().refreshHistory()]);
+      get().pushToast('success', `Applied ${filePath}.`, res.snapshotId);
+    } catch (err) {
+      set({ isApplying: false });
+      get().pushToast('error', err instanceof Error ? err.message : 'Failed to apply file.');
+    }
+  },
+
+  applyPartialFileContent: async (filePath, mergedContent) => {
+    const { activeParse } = get();
+    if (!activeParse) return;
+    const file = activeParse.files.find((f) => f.filePath === filePath);
+    if (!file || file.status !== 'ready') return;
+
+    set({ isApplying: true });
+    try {
+      const res = await api.applyPatch(activeParse.parseId, [filePath], {
+        [filePath]: mergedContent,
+      });
+      const isFullyApplied = mergedContent === file.proposedContent;
+      const stats = isFullyApplied
+        ? { additions: 0, deletions: 0 }
+        : countDiffLines(mergedContent, file.proposedContent);
+
+      const nextApplied = new Set(get().appliedFilePaths);
+      const nextChecked = new Set(get().checkedApplyPaths);
+      const nextSnapshots = { ...get().appliedFileSnapshots };
+      if (isFullyApplied) {
+        nextApplied.add(filePath);
+        nextChecked.delete(filePath);
+        nextSnapshots[filePath] = res.snapshotId;
+      }
+
+      const updatedFiles = activeParse.files.map((f) =>
+        f.filePath === filePath ? { ...f, originalContent: mergedContent, ...stats } : f
+      );
+
+      set({
+        isApplying: false,
+        activeParse: { ...activeParse, files: updatedFiles },
+        appliedFilePaths: nextApplied,
+        appliedFileSnapshots: nextSnapshots,
+        checkedApplyPaths: nextChecked,
+      });
+      await Promise.all([get().refreshTree(true), get().refreshHistory()]);
+      get().pushToast(
+        'success',
+        isFullyApplied ? `Applied all changes to ${filePath}.` : `Applied change block to ${filePath}.`,
+        res.snapshotId
+      );
+    } catch (err) {
+      set({ isApplying: false });
+      get().pushToast('error', err instanceof Error ? err.message : 'Failed to apply change.');
+    }
+  },
+
   undoSnapshotById: async (snapshotId) => {
     try {
       const res = await api.undoSnapshot(snapshotId);
-      const count = res.restoredFiles.length + res.removedCreatedFiles.length;
-      await Promise.all([get().refreshTree(), get().refreshHistory()]);
+      const touched = new Set([...res.restoredFiles, ...res.removedCreatedFiles]);
+      const nextApplied = new Set(get().appliedFilePaths);
+      const nextSnapshots = { ...get().appliedFileSnapshots };
+      for (const p of touched) {
+        nextApplied.delete(p);
+        delete nextSnapshots[p];
+      }
+      set({ appliedFilePaths: nextApplied, appliedFileSnapshots: nextSnapshots });
+      const count = touched.size;
+      await Promise.all([get().refreshTree(true), get().refreshHistory()]);
       get().pushToast('success', `Restored ${count} file(s) to their previous state.`);
     } catch (err) {
       get().pushToast('error', err instanceof Error ? err.message : 'Could not undo snapshot.');

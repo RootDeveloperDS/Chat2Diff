@@ -12,6 +12,7 @@ export interface StoredFilePlan {
   proposedContent: string;
   expectedDiskSha256: string | null;
   existedBefore: boolean;
+  hadCrlf: boolean;
 }
 
 export interface StoredParseSession {
@@ -105,14 +106,56 @@ function cleanHeaderPath(raw: string): string {
 }
 
 function stripSurroundingCodeFence(s: string): string {
-  const trimmed = s.trim();
+  const edgeClean = stripEdgeBlankLines(s);
+  const trimmed = edgeClean.trim();
   const match = /^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/m.exec(trimmed);
   if (match) return match[1];
   const lines = trimmed.split('\n');
   if (lines.length >= 2 && /^```[a-zA-Z0-9_-]*$/.test(lines[0].trim()) && lines[lines.length - 1].trim() === '```') {
     return lines.slice(1, -1).join('\n');
   }
-  return s;
+  return edgeClean;
+}
+
+function stripEdgeBlankLines(s: string): string {
+  const lines = normalizeEol(s).split('\n');
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  return lines.join('\n');
+}
+
+function getMinIndent(lines: string[]): string {
+  let minIndent: string | null = null;
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+    const match = /^[ \t]*/.exec(line);
+    const indent = match ? match[0] : '';
+    if (minIndent === null || indent.length < minIndent.length) {
+      minIndent = indent;
+    }
+  }
+  return minIndent ?? '';
+}
+
+function adjustReplacementIndent(
+  replaceLines: string[],
+  matchedDiskLines: string[],
+  searchLines: string[]
+): string[] {
+  const diskIndent = getMinIndent(matchedDiskLines);
+  const searchIndent = getMinIndent(searchLines);
+  if (diskIndent === searchIndent) return replaceLines;
+
+  return replaceLines.map((line) => {
+    if (line.trim() === '') return '';
+    if (searchIndent && line.startsWith(searchIndent)) {
+      return diskIndent + line.slice(searchIndent.length);
+    }
+    if (!searchIndent) {
+      return diskIndent + line;
+    }
+    return line;
+  });
 }
 
 function normalizeSearchReplaceText(rawText: string): string {
@@ -151,11 +194,9 @@ function lineMatches(searchLine: string, contentLine: string): boolean {
   const sNorm = normalizePunctuation(searchLine);
   const cNorm = normalizePunctuation(contentLine);
   if (sNorm === cNorm) return true;
-  if (cNorm.includes(sNorm) && sNorm.length >= 4) return true;
   const sRel = normalizePunctuationRelaxed(searchLine);
   const cRel = normalizePunctuationRelaxed(contentLine);
-  if (sRel === cRel) return true;
-  if (cRel.includes(sRel) && sRel.length >= 4) return true;
+  if (sRel.length >= 6 && sRel === cRel) return true;
   return false;
 }
 
@@ -225,8 +266,8 @@ function parseSearchReplaceOps(rawText: string): SearchReplaceOp[] {
       ops.push({
         filePath: headers[i].filePath,
         kind: 'replace',
-        search: stripSurroundingCodeFence(search).trim(),
-        replace: stripSurroundingCodeFence(replace).trim(),
+        search: stripSurroundingCodeFence(search),
+        replace: stripSurroundingCodeFence(replace),
       });
     }
   }
@@ -279,9 +320,15 @@ function applySingleSearchReplace(
 
   if (matches.length === 1) {
     const startLine = matches[0];
+    const matchedSlice = contentLines.slice(startLine, startLine + trimmedSearch.length);
+    const adjustedReplace = adjustReplacementIndent(
+      replace.split('\n'),
+      matchedSlice,
+      searchLines
+    );
     const nextLines = [
       ...contentLines.slice(0, startLine),
-      ...replace.split('\n'),
+      ...adjustedReplace,
       ...contentLines.slice(startLine + trimmedSearch.length),
     ];
     return {
@@ -321,9 +368,15 @@ function applySingleSearchReplace(
 
   if (t3Matches.length === 1) {
     const startLine = t3Matches[0];
+    const matchedSlice = contentLines.slice(startLine, startLine + normSearchLines.length);
+    const adjustedReplace = adjustReplacementIndent(
+      replace.split('\n'),
+      matchedSlice,
+      searchLines
+    );
     const nextLines = [
       ...contentLines.slice(0, startLine),
-      ...replace.split('\n'),
+      ...adjustedReplace,
       ...contentLines.slice(startLine + normSearchLines.length),
     ];
     return {
@@ -345,7 +398,7 @@ function applySingleSearchReplace(
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
-  if (nonBlankSearchLines.length > 0) {
+  if (nonBlankSearchLines.length >= 2) {
     const candidateWindows: Array<{ startLine: number; endLine: number }> = [];
 
     for (let c = 0; c < contentLines.length; c++) {
@@ -375,37 +428,7 @@ function applySingleSearchReplace(
       }
 
       if (matchedCount === nonBlankSearchLines.length) {
-        let start = firstMatch;
-        let end = lastMatch;
-
-        // Tag expansion: if replace starts with an opening tag (e.g. <div>) that matches previous line, expand start
-        const replaceTrimmed = replace.trim();
-        const firstReplaceTag = /^<([a-zA-Z0-9_-]+)[^>]*>/.exec(replaceTrimmed);
-        if (firstReplaceTag && start > 0) {
-          const tag = firstReplaceTag[1];
-          if (new RegExp(`^<${tag}[\\s>]`).test(contentLines[start - 1].trim())) {
-            start--;
-          }
-        }
-
-        // If replace ends with a closing tag (e.g. </div> or </button>) that matches next lines, expand end
-        const lastReplaceTag = /<\/([a-zA-Z0-9_-]+)>\s*$/.exec(replaceTrimmed);
-        if (lastReplaceTag) {
-          const tag = lastReplaceTag[1];
-          while (end + 1 < contentLines.length) {
-            const nextTrim = contentLines[end + 1].trim();
-            if (new RegExp(`^<\\/${tag}>`).test(nextTrim)) {
-              end++;
-              break;
-            } else if (/^<\/([a-zA-Z0-9_-]+)>/.test(nextTrim)) {
-              end++;
-            } else {
-              break;
-            }
-          }
-        }
-
-        candidateWindows.push({ startLine: start, endLine: end });
+        candidateWindows.push({ startLine: firstMatch, endLine: lastMatch });
       }
     }
 
@@ -418,9 +441,15 @@ function applySingleSearchReplace(
 
     if (uniqueWindows.length === 1) {
       const { startLine, endLine } = uniqueWindows[0];
+      const matchedSlice = contentLines.slice(startLine, endLine + 1);
+      const adjustedReplace = adjustReplacementIndent(
+        replace.split('\n'),
+        matchedSlice,
+        searchLines
+      );
       const nextLines = [
         ...contentLines.slice(0, startLine),
-        ...replace.split('\n'),
+        ...adjustedReplace,
         ...contentLines.slice(endLine + 1),
       ];
       return {
@@ -472,7 +501,7 @@ function extractUnifiedDiffText(rawText: string): string | null {
   text = text.replace(/^(`{3,})(?:diff|patch)?[ \t]+(diff --git )/gm, '$1diff\n$2');
 
   const fencedMatches = Array.from(
-    text.matchAll(/`{3,}(?:diff|patch)?[ \t]*\n([\s\S]*?)\n`{3,}/gi)
+    text.matchAll(/^`{3,}(?:diff|patch)?[ \t]*\n([\s\S]*?)\n`{3,}[ \t]*(?=\n|$)/gim)
   )
     .map((m) => stripTrailingFences(m[1]))
     .filter(looksLikeUnifiedDiff);
@@ -621,6 +650,51 @@ function recountHunkHeaders(chunk: string): string {
   return out.join('\n');
 }
 
+function applyUnifiedHunksFallback(
+  baseContent: string,
+  chunk: string
+): { ok: true; content: string } | { ok: false } {
+  const lines = chunk.split('\n');
+  const hunks: Array<{ search: string[]; replace: string[] }> = [];
+  let current: { search: string[]; replace: string[] } | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith('@@ ')) {
+      if (current) hunks.push(current);
+      current = { search: [], replace: [] };
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith('diff --git ')) break;
+    if (line.startsWith('\\ No newline')) continue;
+    if (line.startsWith(' ')) {
+      current.search.push(line.slice(1));
+      current.replace.push(line.slice(1));
+    } else if (line.startsWith('-')) {
+      current.search.push(line.slice(1));
+    } else if (line.startsWith('+')) {
+      current.replace.push(line.slice(1));
+    }
+  }
+  if (current) hunks.push(current);
+  if (hunks.length === 0) return { ok: false };
+
+  let working = baseContent;
+  for (const hunk of hunks) {
+    if (hunk.search.length === 0) {
+      if (working === '') {
+        working = hunk.replace.join('\n');
+        continue;
+      }
+      return { ok: false };
+    }
+    const res = applySingleSearchReplace(working, hunk.search.join('\n'), hunk.replace.join('\n'));
+    if (!res.ok) return { ok: false };
+    working = res.next;
+  }
+  return { ok: true, content: working };
+}
+
 // -----------------------------------------------------------------------------
 // PUBLIC ENTRYPOINT: PARSE, HEAL & BUILD PREVIEW
 // -----------------------------------------------------------------------------
@@ -726,6 +800,7 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
         proposedContent: '',
         expectedDiskSha256: disk.rawSha256,
         existedBefore: true,
+        hadCrlf: disk.hadCrlf,
       });
       continue;
     }
@@ -754,6 +829,7 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
         proposedContent: disk.hadCrlf ? nextLf.replace(/\n/g, '\r\n') : nextLf,
         expectedDiskSha256: disk.rawSha256,
         existedBefore: disk.exists,
+        hadCrlf: disk.hadCrlf,
       });
       continue;
     }
@@ -824,6 +900,7 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
       proposedContent: disk.hadCrlf ? working.replace(/\n/g, '\r\n') : working,
       expectedDiskSha256: disk.rawSha256,
       existedBefore: true,
+      hadCrlf: disk.hadCrlf,
     });
   }
 
@@ -890,6 +967,7 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
         proposedContent: '',
         expectedDiskSha256: disk.rawSha256,
         existedBefore: true,
+        hadCrlf: disk.hadCrlf,
       });
       continue;
     }
@@ -920,6 +998,12 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
       patched = applyPatch(baseContent, mdFixed, { fuzzFactor: 2 });
       if (patched !== false) {
         repairNote = 'Auto-fixed minor AI diff formatting';
+      } else {
+        const fallback = applyUnifiedHunksFallback(baseContent, mdFixed);
+        if (fallback.ok) {
+          patched = fallback.content;
+          repairNote = 'Auto-aligned drifted diff hunks';
+        }
       }
     }
 
@@ -959,6 +1043,7 @@ export function parseAndPreviewPatch(repoPath: string, rawText: string): ParsePa
       proposedContent: disk.hadCrlf ? patched.replace(/\n/g, '\r\n') : patched,
       expectedDiskSha256: disk.rawSha256,
       existedBefore: disk.exists,
+      hadCrlf: disk.hadCrlf,
     });
   }
 

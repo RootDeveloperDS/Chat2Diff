@@ -46,7 +46,8 @@ function formatSummary(files: ManifestFileEntry[]): string {
 export function applySelectedFiles(
   repoPath: string,
   parseId: string,
-  selectedFilePaths: string[]
+  selectedFilePaths: string[],
+  customContents?: Record<string, string>
 ): ApplyPatchResponse {
   const session = getStoredParseSession(parseId);
   if (!session || path.resolve(session.repoPath) !== path.resolve(repoPath)) {
@@ -87,10 +88,11 @@ export function applySelectedFiles(
   for (let idx = 0; idx < plansToApply.length; idx++) {
     const plan = plansToApply[idx];
     const absPath = resolveSafeRepoPath(repoPath, plan.filePath);
+    const existedBefore = plan.existedBefore;
     let backupBlobName: string | null = null;
 
     // 1. Save exact pre-apply bytes
-    if (plan.existedBefore && fs.existsSync(absPath)) {
+    if (existedBefore && fs.existsSync(absPath)) {
       backupBlobName = `${String(idx).padStart(3, '0')}_${path.basename(plan.filePath)}.bak`;
       fs.copyFileSync(absPath, path.join(snapshotDir, backupBlobName));
     }
@@ -100,15 +102,26 @@ export function applySelectedFiles(
       if (fs.existsSync(absPath)) {
         fs.unlinkSync(absPath);
       }
+      plan.expectedDiskSha256 = null;
+      plan.existedBefore = false;
     } else {
+      const overrideLf = customContents?.[plan.filePath];
+      const contentToWrite =
+        overrideLf !== undefined
+          ? plan.hadCrlf
+            ? overrideLf.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+            : overrideLf.replace(/\r\n/g, '\n')
+          : plan.proposedContent;
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
-      fs.writeFileSync(absPath, plan.proposedContent, 'utf8');
+      fs.writeFileSync(absPath, contentToWrite, 'utf8');
+      plan.expectedDiskSha256 = sha256(contentToWrite);
+      plan.existedBefore = true;
     }
 
     manifestFiles.push({
       filePath: plan.filePath,
       action: plan.action,
-      existedBefore: plan.existedBefore,
+      existedBefore,
       backupBlobName,
     });
     appliedFiles.push(plan.filePath);

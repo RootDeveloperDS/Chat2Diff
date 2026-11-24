@@ -64,10 +64,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ rawText }),
     }),
-  applyPatch: (parseId: string, selectedFilePaths: string[]) =>
+  applyPatch: (
+    parseId: string,
+    selectedFilePaths: string[],
+    customContents?: Record<string, string>
+  ) =>
     request<ApplyPatchResponse>('/api/v1/patch/apply', {
       method: 'POST',
-      body: JSON.stringify({ parseId, selectedFilePaths }),
+      body: JSON.stringify({ parseId, selectedFilePaths, customContents }),
     }),
   getHistory: () => request<{ snapshots: SnapshotSummary[] }>('/api/v1/history'),
   undoSnapshot: (snapshotId: string) =>

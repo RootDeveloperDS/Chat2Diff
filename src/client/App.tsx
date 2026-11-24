@@ -46,6 +46,24 @@ export function App() {
     return disconnect;
   }, [bootstrap, receiveIncomingParse, setWatcherStatus, setSocketConnected]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key === '1') {
+        e.preventDefault();
+        setStep(1);
+      } else if (e.key === '2') {
+        e.preventDefault();
+        setStep(2);
+      } else if (e.key === '3') {
+        e.preventDefault();
+        setStep(3);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [setStep]);
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <TopBar />
@@ -110,6 +128,18 @@ export function App() {
           >
             <span>{t.text}</span>
             <div className="flex items-center gap-1.5 shrink-0">
+              {t.actionLabel && t.actionStep && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep(t.actionStep!);
+                    dismissToast(t.id);
+                  }}
+                  className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold cursor-pointer"
+                >
+                  {t.actionLabel}
+                </button>
+              )}
               {t.undoSnapshotId && (
                 <button
                   type="button"

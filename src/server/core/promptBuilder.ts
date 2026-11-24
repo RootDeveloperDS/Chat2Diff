@@ -182,8 +182,12 @@ export function buildPackResponse(repoPath: string, req: PackRequest): PackRespo
     req.mode === 'file_attachment'
       ? `Project files are attached in \`${contextFileName}\`. Read the relevant files first before generating patches.`
       : 'Project files are provided below inside `<file path="...">...</file>` tags.',
-    'When targeting a file, copy its exact relative path from the `path` attribute (e.g. `FILE: path/to/file.ext`).',
-    'Copy SEARCH lines verbatim from the actual file contents (including indentation, brackets, and JSX tags).',
+    req.patchFormatPreference === 'unified_diff'
+      ? 'When targeting a file, copy its exact relative path from the `path` attribute into `diff --git a/path b/path`, `--- a/path`, and `+++ b/path`.'
+      : 'When targeting a file, copy its exact relative path from the `path` attribute (e.g. `FILE: path/to/file.ext`).',
+    req.patchFormatPreference === 'unified_diff'
+      ? 'Copy all unchanged context and removed lines verbatim from the source file, with a single leading space on unchanged lines.'
+      : 'Copy SEARCH lines verbatim from the actual file contents (including indentation, brackets, and JSX tags).',
     '================================================================================',
   ]
     .filter((line) => line !== undefined)

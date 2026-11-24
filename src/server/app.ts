@@ -47,6 +47,7 @@ const ParseSchema = z.object({
 const ApplySchema = z.object({
   parseId: z.string().min(1),
   selectedFilePaths: z.array(z.string().min(1)).min(1),
+  customContents: z.record(z.string(), z.string()).optional(),
 });
 
 const OpenRepoSchema = z.object({
@@ -99,6 +100,7 @@ export function createApp(state: ServerState): Hono {
         gitBranch: git.gitBranch,
         clipboardWatchEnabled: watch.enabled,
         clipboardAvailable: watch.available,
+        defaultPatchFormat: config.defaultPatchFormat,
         recentRepos: config.recentRepos,
       },
     });
@@ -163,6 +165,15 @@ export function createApp(state: ServerState): Hono {
     }
     try {
       const result = buildPackResponse(state.repoPath, parsed.data);
+      const config = loadConfig();
+      if (config.defaultPatchFormat !== parsed.data.patchFormatPreference) {
+        config.defaultPatchFormat = parsed.data.patchFormatPreference;
+        saveConfig(config);
+      }
+      state.watcher.ignoreText(result.promptText);
+      if (result.contextFileContent) {
+        state.watcher.ignoreText(result.contextFileContent);
+      }
       return c.json({ data: result });
     } catch (err) {
       if (err instanceof PathSecurityError) {
@@ -191,6 +202,9 @@ export function createApp(state: ServerState): Hono {
         400
       );
     }
+    if (result.retryPrompt) {
+      state.watcher.ignoreText(result.retryPrompt);
+    }
     return c.json({ data: result });
   });
 
@@ -204,7 +218,8 @@ export function createApp(state: ServerState): Hono {
       const result = applySelectedFiles(
         state.repoPath,
         parsed.data.parseId,
-        parsed.data.selectedFilePaths
+        parsed.data.selectedFilePaths,
+        parsed.data.customContents
       );
       return c.json({ data: result });
     } catch (err) {
@@ -265,7 +280,9 @@ export function createApp(state: ServerState): Hono {
     const reqPath = c.req.path === '/' ? '/index.html' : c.req.path;
     const candidate = path.resolve(publicDir, reqPath.replace(/^\/+/, ''));
     const safeFile =
-      candidate.startsWith(publicDir) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()
+      (candidate === publicDir || candidate.startsWith(publicDir + path.sep)) &&
+      fs.existsSync(candidate) &&
+      fs.statSync(candidate).isFile()
         ? candidate
         : path.join(publicDir, 'index.html');
 

@@ -17,8 +17,10 @@ isGitRepo: boolean;
 gitBranch: string | null;
 clipboardWatchEnabled: boolean;
 clipboardAvailable: boolean;
+defaultPatchFormat?: PatchFormat;
 recentRepos: RecentRepo[];
 }
+
 
 export interface DirectoryEntry {
 name: string;
