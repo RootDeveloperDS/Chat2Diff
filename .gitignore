@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.chat2diff/
+.env
+.env.local
+*.tgz
+create_core.ps1
+.DS_Store
+Thumbs.db
+.archives/

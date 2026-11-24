@@ -1,0 +1,57 @@
+{
+  "name": "chat2diff",
+  "version": "0.1.0",
+  "description": "Use any AI chatbot (ChatGPT, Gemini, Claude, DeepSeek) safely on your local codebase with visual diff review and 1-click undo.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "chat2diff": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c cyan,green \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx src/server/cli.ts --dev --no-open",
+    "dev:client": "vite",
+    "build": "vite build && tsup",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "clipboardy": "^4.0.0",
+    "diff": "^7.0.0",
+    "hono": "^4.6.20",
+    "ignore": "^7.0.3",
+    "lucide-react": "^0.471.0",
+    "open": "^10.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/diff": "^7.0.2",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.0.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
