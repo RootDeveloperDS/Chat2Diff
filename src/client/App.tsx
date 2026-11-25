@@ -10,21 +10,36 @@ import { TopBar } from './components/TopBar.js';
 import { connectPatchSocket } from './lib/api.js';
 import { useWorkbenchStore } from './store/useWorkbenchStore.js';
 
-const STEPS: Array<{ id: WizardStep; title: string }> = [
-  { id: 1, title: '1. Pick Files' },
-  { id: 2, title: '2. Describe Task' },
-  { id: 3, title: '3. Review & Apply' },
+const VIEWS: Array<{ id: WizardStep; title: string; shortcut: string }> = [
+  { id: 'prepare', title: '1. Prepare & Send', shortcut: 'Alt+1' },
+  { id: 'review', title: '2. Review & Apply', shortcut: 'Alt+2' },
 ];
+
+function looksLikePatchText(text: string): boolean {
+  if (!text || text.length < 15) return false;
+  if (/(?:<[ \t]*){4,12}[ \t]*SEARCH/i.test(text) && /(?:>[ \t]*){4,12}[ \t]*REPLACE/i.test(text)) {
+    return true;
+  }
+  if (/^--- .+\n\+\+\+ .+/m.test(text) && text.includes('@@')) return true;
+  if (/^[ \t]*(?:[#*>\s\-\/\d.]*)(?:CREATE FILE|NEW FILE|DELETE FILE|REMOVE FILE)\*{0,2}\s*:/mi.test(text)) {
+    return true;
+  }
+  return false;
+}
 
 export function App() {
   const {
     activeStep,
     selectedPaths,
+    activeParse,
+    appliedFilePaths,
     hasUnreadPatch,
+    filePanelCollapsed,
     toasts,
     setStep,
     bootstrap,
     receiveIncomingParse,
+    parseRawText,
     setWatcherStatus,
     setSocketConnected,
     dismissToast,
@@ -51,33 +66,60 @@ export function App() {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.key === '1') {
         e.preventDefault();
-        setStep(1);
+        setStep('prepare');
       } else if (e.key === '2') {
         e.preventDefault();
-        setStep(2);
-      } else if (e.key === '3') {
-        e.preventDefault();
-        setStep(3);
+        setStep('review');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [setStep]);
 
+  // Paste-Anywhere shortcut (Ctrl+V / Cmd+V outside text inputs)
+  useEffect(() => {
+    const onGlobalPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const pasted = e.clipboardData?.getData('text/plain') ?? '';
+      if (!pasted.trim()) return;
+      const onReview = useWorkbenchStore.getState().activeStep === 'review';
+      if (onReview || looksLikePatchText(pasted)) {
+        e.preventDefault();
+        void parseRawText(pasted);
+      }
+    };
+    window.addEventListener('paste', onGlobalPaste);
+    return () => window.removeEventListener('paste', onGlobalPaste);
+  }, [parseRawText]);
+
+  const pendingReviewCount = activeParse
+    ? activeParse.files.filter((f) => f.status === 'ready' && !appliedFilePaths.has(f.filePath))
+        .length
+    : 0;
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <TopBar />
 
-      {/* 3-Step Guided Navigation */}
+      {/* Clean 2-Mode Navigation */}
       <nav className="border-b border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
-        <div className="max-w-3xl mx-auto grid grid-cols-3 gap-2">
-          {STEPS.map((s) => {
+        <div className="max-w-xl mx-auto grid grid-cols-2 gap-2">
+          {VIEWS.map((s) => {
             const active = activeStep === s.id;
             return (
               <button
                 key={s.id}
                 type="button"
                 onClick={() => setStep(s.id)}
+                title={`Switch view (${s.shortcut})`}
                 className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition cursor-pointer ${
                   active
                     ? 'bg-blue-600 text-white shadow-xs'
@@ -85,16 +127,25 @@ export function App() {
                 }`}
               >
                 <span>{s.title}</span>
-                {s.id === 1 && selectedPaths.size > 0 && (
+                {s.id === 'prepare' && selectedPaths.size > 0 && (
                   <span
                     className={`text-[11px] px-1.5 py-0.5 rounded-full ${
                       active ? 'bg-white/20 text-white' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
                     }`}
                   >
-                    {selectedPaths.size}
+                    {selectedPaths.size} files
                   </span>
                 )}
-                {s.id === 3 && hasUnreadPatch && (
+                {s.id === 'review' && pendingReviewCount > 0 && (
+                  <span
+                    className={`text-[11px] px-1.5 py-0.5 rounded-full ${
+                      active ? 'bg-white/20 text-white' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    }`}
+                  >
+                    {pendingReviewCount} pending
+                  </span>
+                )}
+                {s.id === 'review' && hasUnreadPatch && (
                   <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
                 )}
               </button>
@@ -103,11 +154,26 @@ export function App() {
         </div>
       </nav>
 
-      {/* Active Step Workspace */}
-      <main className="flex-1 overflow-y-auto flex flex-col">
-        {activeStep === 1 && <Step1SelectFiles />}
-        {activeStep === 2 && <Step2DescribeTask />}
-        {activeStep === 3 && <Step3ReviewApply />}
+      {/* Active Mode Workspace */}
+      <main className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        {activeStep === 'prepare' ? (
+          <div className="p-4 sm:p-5 max-w-[1440px] mx-auto w-full flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {!filePanelCollapsed && (
+              <div className="lg:col-span-5 xl:col-span-4 min-h-0 flex flex-col">
+                <Step1SelectFiles />
+              </div>
+            )}
+            <div
+              className={`${
+                filePanelCollapsed ? 'lg:col-span-12 max-w-4xl mx-auto w-full' : 'lg:col-span-7 xl:col-span-8'
+              } min-h-0 flex flex-col`}
+            >
+              <Step2DescribeTask />
+            </div>
+          </div>
+        ) : (
+          <Step3ReviewApply />
+        )}
       </main>
 
       <RepoPickerModal />

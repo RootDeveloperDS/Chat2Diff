@@ -1,4 +1,4 @@
-import { Clock, FolderGit2, FolderOpen, Layers, Moon, Radio, Sun } from 'lucide-react';
+import { Clock, FolderGit2, FolderOpen, Layers, Moon, Radio, Sun, Zap } from 'lucide-react';
 import { useWorkbenchStore } from '../store/useWorkbenchStore.js';
 
 export function TopBar() {
@@ -8,11 +8,13 @@ export function TopBar() {
     gitBranch,
     clipboardWatchEnabled,
     clipboardAvailable,
+    autoJumpToReview,
     darkMode,
     snapshots,
     setRepoPickerOpen,
     setHistoryDrawerOpen,
     toggleWatcher,
+    toggleAutoJumpToReview,
     toggleDarkMode,
   } = useWorkbenchStore();
 
@@ -72,6 +74,20 @@ export function TopBar() {
                 ? 'Listening for AI Replies'
                 : 'Auto-Listen Paused'}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={toggleAutoJumpToReview}
+          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium border transition cursor-pointer ${
+            autoJumpToReview
+              ? 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300'
+              : 'border-[var(--border-default)] bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+          }`}
+          title="Automatically switch to Review & Apply when an AI patch is copied to your clipboard"
+        >
+          <Zap className="h-3.5 w-3.5"/>
+          <span>{autoJumpToReview ? 'Auto-Review On' : 'Auto-Review Off'}</span>
         </button>
 
         <button

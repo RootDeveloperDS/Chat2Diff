@@ -10,6 +10,7 @@ import type { WsEvent } from '../shared/types.js';
 import { createApp, isValidLocalHost, type ServerState, verifySessionToken } from './app.js';
 import { ClipboardWatcher } from './core/clipboardWatcher.js';
 import { loadConfig, recordRecentRepo } from './core/configStore.js';
+import { cleanupCacheDir } from './core/fileClipboard.js';
 import { parseAndPreviewPatch } from './core/patchEngine.js';
 
 function parseCliArgs(argv: string[]): {
@@ -91,7 +92,11 @@ async function main(): Promise<void> {
   const watcher = new ClipboardWatcher(
     opts.noWatch ? false : config.clipboardWatchEnabled,
     (rawText) => {
-      const parseResult = parseAndPreviewPatch(serverState.repoPath, rawText);
+      const parseResult = parseAndPreviewPatch(
+        serverState.repoPath,
+        rawText,
+        loadConfig().defaultPatchFormat
+      );
       if (parseResult) {
         if (parseResult.retryPrompt) {
           watcher.ignoreText(parseResult.retryPrompt);
@@ -159,6 +164,7 @@ async function main(): Promise<void> {
 
   const shutdown = (): void => {
     watcher.stop();
+    cleanupCacheDir();
     wss.close();
     httpServer.close(() => process.exit(0));
   };

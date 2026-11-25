@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
   FileCode2,
   Folder,
+  GitBranch,
   Minimize2,
+  PanelLeftClose,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -102,15 +103,18 @@ export function Step1SelectFiles() {
     totalFiles,
     skippedSecretsCount,
     skippedBinaryCount,
+    changedPaths,
     selectedPaths,
     searchQuery,
     isLoadingTree,
     setSearchQuery,
     toggleNodeSelection,
     selectAllFiles,
+    selectChangedFiles,
+    removePathsFromSelection,
     clearSelection,
     refreshTree,
-    setStep,
+    setFilePanelCollapsed,
   } = useWorkbenchStore();
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -160,12 +164,6 @@ export function Step1SelectFiles() {
     }
     return Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length);
   }, [selectedPaths]);
-
-  const removeFolderGroup = (paths: string[]) => {
-    const next = new Set(selectedPaths);
-    for (const p of paths) next.delete(p);
-    useWorkbenchStore.setState({ selectedPaths: next });
-  };
 
   const toggleExpand = (dirPath: string) => {
     setExpandedDirs((prev) => {
@@ -245,164 +243,138 @@ export function Step1SelectFiles() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-      {/* Left: Interactive Folder & File Picker */}
-      <div className="lg:col-span-8 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] overflow-hidden flex flex-col">
-        <div className="p-4 border-b border-[var(--border-default)] space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <h2 className="font-semibold text-sm">Pick the folders or files you want to work on</h2>
-              <p className="text-xs text-[var(--text-muted)]">
-                Check a whole folder to include everything inside it, or pick specific files.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={selectAllFiles}
-                className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                Select All ({totalFiles})
-              </button>
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={() => setExpandedDirs(new Set(collectAllDirPaths(fileTree)))}
-                title="Expand all folders"
-                className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                <ChevronsUpDown className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setExpandedDirs(new Set())}
-                title="Collapse all folders"
-                className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                <Minimize2 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void refreshTree()}
-                title="Refresh files from disk"
-                className="p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${isLoadingTree ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
+    <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] overflow-hidden flex flex-col flex-1 min-h-[420px] lg:max-h-[calc(100vh-148px)]">
+      <div className="p-3.5 border-b border-[var(--border-default)] space-y-2.5 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-sm">Project Files</h2>
+            <p className="text-[11px] text-[var(--text-muted)]">
+              {selectedPaths.size} of {totalFiles} selected (~{selectedTokens.toLocaleString()} tok)
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={() => setFilePanelCollapsed(true)}
+            title="Hide file tree for more writing space"
+            className="hidden lg:inline-flex p-1.5 rounded-lg border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+          </button>
+        </div>
 
-          <div className="relative">
-            <Search className="h-4 w-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter folders or files (e.g. components, api, auth)..."
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-default)] bg-[var(--bg-canvas)] focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>
-              Auto-hidden for safety: .gitignore files, {skippedSecretsCount} secret file(s), and{' '}
-              {skippedBinaryCount} binary/large asset(s).
-            </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={selectAllFiles}
+            className="text-[11px] px-2 py-1 rounded-md border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+          >
+            All ({totalFiles})
+          </button>
+          {changedPaths.length > 0 && (
+            <button
+              type="button"
+              onClick={selectChangedFiles}
+              title="Select only uncommitted Git changes"
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 cursor-pointer"
+            >
+              <GitBranch className="h-3 w-3" />
+              <span>Changed ({changedPaths.length})</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-[11px] px-2 py-1 rounded-md border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+          >
+            Clear
+          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setExpandedDirs(new Set(collectAllDirPaths(fileTree)))}
+              title="Expand all folders"
+              className="p-1 rounded-md border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+            >
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpandedDirs(new Set())}
+              title="Collapse all folders"
+              className="p-1 rounded-md border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshTree()}
+              title="Refresh files from disk"
+              className="p-1 rounded-md border border-[var(--border-default)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoadingTree ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
 
-        <div className="p-2 overflow-y-auto max-h-[58vh]">
-          {isLoadingTree ? (
-            <div className="p-6 text-sm text-[var(--text-muted)]">Scanning project files...</div>
-          ) : filteredTree.length === 0 ? (
-            <div className="p-8 text-center text-sm text-[var(--text-muted)]">
-              No matching code files found.
-            </div>
-          ) : (
-            filteredTree.map((node) => renderNode(node, 0))
-          )}
+        <div className="relative">
+          <Search className="h-3.5 w-3.5 text-[var(--text-muted)] absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter folders or files..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-[var(--border-default)] bg-[var(--bg-canvas)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
       </div>
 
-      {/* Right: Friendly Selection & Fit Summary */}
-      <div className="lg:col-span-4 space-y-4">
-        <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-5 space-y-5 sticky top-6">
-          <div>
-            <h2 className="font-semibold text-sm text-[var(--text-secondary)]">Selection Summary</h2>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-3xl font-bold">{selectedPaths.size}</span>
-              <span className="text-sm text-[var(--text-muted)]">
-                {selectedPaths.size === 1 ? 'file selected' : 'files selected'}
+      <div className="p-2 overflow-y-auto flex-1 min-h-0">
+        {isLoadingTree ? (
+          <div className="p-5 text-xs text-[var(--text-muted)]">Scanning project files...</div>
+        ) : filteredTree.length === 0 ? (
+          <div className="p-6 text-center text-xs text-[var(--text-muted)]">
+            No matching code files found.
+          </div>
+        ) : (
+          filteredTree.map((node) => renderNode(node, 0))
+        )}
+      </div>
+
+      {/* Compact Footer: Selected Chips + Model Fit + Safety Notice */}
+      <div className="p-3 border-t border-[var(--border-default)] bg-[var(--bg-subtle)]/50 space-y-2.5 shrink-0">
+        {selectedFolderChips.length > 0 && (
+          <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+            {selectedFolderChips.map(([folder, paths]) => (
+              <span
+                key={folder}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-surface)] border border-[var(--border-default)] text-[11px] font-mono"
+              >
+                <span className="truncate max-w-[130px]">{folder}</span>
+                <span className="text-[var(--text-muted)]">({paths.length})</span>
+                <button
+                  type="button"
+                  onClick={() => removePathsFromSelection(paths)}
+                  className="text-[var(--text-muted)] hover:text-red-500 cursor-pointer"
+                  title={`Remove ${folder}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
               </span>
-            </div>
-            <p className="text-xs text-[var(--text-muted)] mt-1">
-              Estimated size: ~{selectedTokens.toLocaleString()} tokens
-            </p>
+            ))}
           </div>
+        )}
 
-          {selectedFolderChips.length > 0 && (
-            <div className="space-y-2 pt-3 border-t border-[var(--border-default)]">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">Selected Folders</p>
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {selectedFolderChips.map(([folder, paths]) => (
-                  <span
-                    key={folder}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--bg-subtle)] border border-[var(--border-default)] text-[11px] font-mono"
-                  >
-                    <span className="truncate max-w-[160px]">{folder}</span>
-                    <span className="text-[var(--text-muted)]">({paths.length})</span>
-                    <button
-                      type="button"
-                      onClick={() => removeFolderGroup(paths)}
-                      className="text-[var(--text-muted)] hover:text-red-500 cursor-pointer"
-                      title={`Remove ${folder}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+          <span className="text-[var(--text-muted)]">ChatGPT: <FitBadge level={modelFit.chatgpt} /></span>
+          <span className="text-[var(--text-muted)]">Claude: <FitBadge level={modelFit.claude} /></span>
+          <span className="text-[var(--text-muted)]">Gemini: <FitBadge level={modelFit.gemini} /></span>
+        </div>
 
-          <div className="space-y-2.5 pt-3 border-t border-[var(--border-default)]">
-            <p className="text-xs font-medium text-[var(--text-secondary)]">Will this fit in my AI chat?</p>
-            <div className="flex items-center justify-between text-sm">
-              <span>ChatGPT (128K)</span>
-              <FitBadge level={modelFit.chatgpt} />
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span>Claude (200K)</span>
-              <FitBadge level={modelFit.claude} />
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span>Gemini (1M)</span>
-              <FitBadge level={modelFit.gemini} />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            disabled={selectedPaths.size === 0}
-            onClick={() => setStep(2)}
-            className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-medium text-sm flex items-center justify-center gap-2 transition cursor-pointer"
-          >
-            <span>Next: Describe Your Task</span>
-            <ArrowRight className="h-4 w-4" />
-          </button>
-
-          {selectedPaths.size === 0 && (
-            <p className="text-xs text-center text-[var(--text-muted)]">
-              Pick at least one file or folder on the left to continue.
-            </p>
-          )}
+        <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
+          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="truncate">
+            Auto-hidden: .gitignore, {skippedSecretsCount} secret(s), {skippedBinaryCount} binary/large
+          </span>
         </div>
       </div>
     </div>

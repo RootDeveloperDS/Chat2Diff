@@ -123,9 +123,44 @@ function collectFilesViaFs(repoPath: string): string[] {
   return found;
 }
 
+function collectChangedFilesViaGit(repoPath: string): string[] {
+  try {
+    const output = execFileSync('git', ['status', '--porcelain', '-z'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const tokens = output.split('\0');
+    const changed: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const entry = tokens[i];
+      if (!entry || entry.length < 4) continue;
+      const status = entry.slice(0, 2);
+      const filePath = entry.slice(3).replace(/\\/g, '/');
+      if (filePath) changed.push(filePath);
+      if (status.includes('R') || status.includes('C')) {
+        i += 1; // skip original path entry in porcelain -z
+      }
+    }
+    return changed;
+  } catch {
+    return [];
+  }
+}
+
+export function collectRepoFilePaths(repoPath: string): string[] {
+  const resolvedRoot = path.resolve(repoPath);
+  const rawPaths = collectFilesViaGit(resolvedRoot) ?? collectFilesViaFs(resolvedRoot);
+  return rawPaths
+    .filter((relPosix) => !relPosix.split('/').some((p) => SKIP_DIRECTORIES.has(p)))
+    .sort();
+}
+
 export function scanRepositoryTree(repoPath: string): FileTreeResponse {
   const resolvedRoot = path.resolve(repoPath);
   const rawPaths = collectFilesViaGit(resolvedRoot) ?? collectFilesViaFs(resolvedRoot);
+  const validFileSet = new Set<string>();
 
   let skippedSecretsCount = 0;
   let skippedBinaryCount = 0;
@@ -201,6 +236,7 @@ export function scanRepositoryTree(repoPath: string): FileTreeResponse {
     };
 
     totalFiles += 1;
+    validFileSet.add(relPosix);
     if (parts.length === 1) {
       rootChildren.push(fileNode);
     } else {
@@ -231,11 +267,16 @@ export function scanRepositoryTree(repoPath: string): FileTreeResponse {
 
   finalizeNode(rootChildren);
 
+  const changedPaths = collectChangedFilesViaGit(resolvedRoot).filter((p) =>
+    validFileSet.has(p)
+  );
+
   return {
     rootName: path.basename(resolvedRoot),
     totalFiles,
     skippedSecretsCount,
     skippedBinaryCount,
+    changedPaths,
     tree: rootChildren,
   };
 }

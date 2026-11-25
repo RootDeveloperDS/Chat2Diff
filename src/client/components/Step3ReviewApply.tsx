@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { diffLines, diffWordsWithSpace } from 'diff';
 import {
-  AlertCircle,
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -585,6 +585,7 @@ export function Step3ReviewApply() {
     applySingleFile,
     applyPartialFileContent,
     undoSnapshotById,
+    startFollowUpFromReview,
     pushToast,
   } = useWorkbenchStore();
 
@@ -728,8 +729,8 @@ export function Step3ReviewApply() {
             <h2 className="text-base font-semibold">Waiting for AI Changes</h2>
             <p className="text-xs text-[var(--text-muted)] mt-1 max-w-md mx-auto">
               {clipboardWatchEnabled
-                ? 'Copy the reply from ChatGPT, Gemini, or Claude — Chat2Diff will open the preview automatically. Or paste it below.'
-                : 'Paste the reply from your AI chat to inspect changes before writing to disk.'}
+                ? 'Copy the reply from any AI chat — Chat2Diff detects it automatically. You can also press Ctrl+V anywhere or paste below.'
+                : 'Press Ctrl+V anywhere on this page or paste the AI reply below to preview changes safely.'}
             </p>
           </div>
 
@@ -811,6 +812,16 @@ export function Step3ReviewApply() {
               <span>Copy Fix Prompt ({activeParse.summary.failedCount})</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={startFollowUpFromReview}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 cursor-pointer"
+            title="Send exact applied/skipped/failed status to your next turn in the same AI chat"
+          >
+            <span>Continue in Same Chat</span>
+            <ArrowRight className="h-3.5 w-3.5"/>
+          </button>
 
           <button
             type="button"

@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { loadConfig, recordRecentRepo, saveConfig } from './core/configStore.js';
 import type { ClipboardWatcher } from './core/clipboardWatcher.js';
+import { copyFileToClipboard, writeSingleCacheFile } from './core/fileClipboard.js';
 import { parseAndPreviewPatch } from './core/patchEngine.js';
 import { PathSecurityError } from './core/pathGuard.js';
 import { buildPackResponse } from './core/promptBuilder.js';
@@ -30,14 +31,30 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+const TurnSyncSchema = z.object({
+  appliedFiles: z.array(z.string()).default([]),
+  partiallyAppliedFiles: z.array(z.string()).default([]),
+  notAppliedFiles: z.array(z.string()).default([]),
+  failedFiles: z.array(z.object({ filePath: z.string(), reason: z.string() })).default([]),
+  undoneFiles: z.array(z.string()).default([]),
+});
+
 const PackSchema = z.object({
-  selectedPaths: z.array(z.string().min(1)).min(1),
+  selectedPaths: z.array(z.string().min(1)),
   preset: z.enum(['bug_fix', 'add_feature', 'improve_code', 'review_code']),
   taskDescription: z.string().min(1).max(25_000),
   errorLog: z.string().max(60_000).optional(),
   patchFormatPreference: z.enum(['search_replace', 'unified_diff']),
   redactSecrets: z.boolean().default(true),
   mode: z.enum(['inline_copy', 'file_attachment']),
+  chatMode: z.enum(['new_chat', 'follow_up']).default('new_chat'),
+  turnSync: TurnSyncSchema.nullable().optional(),
+  includeSelectedInFollowUp: z.boolean().optional(),
+  followUpAttachMode: z.enum(['smart', 'all', 'none']).optional(),
+  fileBundleStyle: z.enum(['all_in_one', 'separate_prompt']).optional(),
+  copyFileToClipboard: z.boolean().optional(),
+}).refine((val) => val.chatMode === 'follow_up' || val.selectedPaths.length > 0, {
+  message: 'Select at least one file when starting a new chat.',
 });
 
 const ParseSchema = z.object({
@@ -170,11 +187,24 @@ export function createApp(state: ServerState): Hono {
         config.defaultPatchFormat = parsed.data.patchFormatPreference;
         saveConfig(config);
       }
-      state.watcher.ignoreText(result.promptText);
-      if (result.contextFileContent) {
-        state.watcher.ignoreText(result.contextFileContent);
-      }
-      return c.json({ data: result });
+        state.watcher.ignoreText(result.promptText);
+        if (result.contextFileContent) {
+          state.watcher.ignoreText(result.contextFileContent);
+          if (parsed.data.mode === 'file_attachment') {
+            const cachedFilePath = writeSingleCacheFile(
+              result.contextFileName,
+              result.contextFileContent
+            );
+            result.cachedFilePath = cachedFilePath;
+            state.watcher.ignoreText(cachedFilePath);
+            if (parsed.data.copyFileToClipboard) {
+              const clip = await copyFileToClipboard(cachedFilePath);
+              result.fileCopiedToClipboard = clip.copied;
+              result.fileClipboardError = clip.error ?? null;
+            }
+          }
+        }
+        return c.json({ data: result });
     } catch (err) {
       if (err instanceof PathSecurityError) {
         return c.json({ error: 'PATH_FORBIDDEN', message: err.message }, 403);
@@ -192,7 +222,8 @@ export function createApp(state: ServerState): Hono {
     if (!parsed.success) {
       return c.json({ error: 'VALIDATION_ERROR', message: 'Paste an AI response containing code changes.' }, 400);
     }
-    const result = parseAndPreviewPatch(state.repoPath, parsed.data.rawText);
+    const config = loadConfig();
+    const result = parseAndPreviewPatch(state.repoPath, parsed.data.rawText, config.defaultPatchFormat);
     if (!result) {
       return c.json(
         {

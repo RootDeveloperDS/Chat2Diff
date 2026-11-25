@@ -1,8 +1,19 @@
-export type WizardStep = 1 | 2 | 3;
+export type WizardStep = 'prepare' | 'review';
+export type ChatMode = 'new_chat' | 'follow_up';
+export type FollowUpAttachMode = 'smart' | 'all' | 'none';
 export type TaskPreset = 'bug_fix' | 'add_feature' | 'improve_code' | 'review_code';
 export type PatchFormat = 'search_replace' | 'unified_diff';
 export type ExportMode = 'inline_copy' | 'file_attachment';
+export type FileBundleStyle = 'all_in_one' | 'separate_prompt';
 export type ModelFitLevel = 'great' | 'tight' | 'too_large';
+
+export interface TurnSyncStatus {
+appliedFiles: string[];
+partiallyAppliedFiles: string[];
+notAppliedFiles: string[];
+failedFiles: Array<{ filePath: string; reason: string }>;
+undoneFiles: string[];
+}
 
 export interface RecentRepo {
 path: string;
@@ -49,6 +60,7 @@ rootName: string;
 totalFiles: number;
 skippedSecretsCount: number;
 skippedBinaryCount: number;
+changedPaths: string[];
 tree: FileTreeNode[];
 }
 
@@ -60,6 +72,12 @@ errorLog?: string;
 patchFormatPreference: PatchFormat;
 redactSecrets: boolean;
 mode: ExportMode;
+chatMode?: ChatMode;
+turnSync?: TurnSyncStatus | null;
+includeSelectedInFollowUp?: boolean;
+followUpAttachMode?: FollowUpAttachMode;
+fileBundleStyle?: FileBundleStyle;
+copyFileToClipboard?: boolean;
 }
 
 export interface ModelFitSummary {
@@ -77,11 +95,17 @@ export interface PackResponse {
 promptText: string;
 contextFileContent: string | null;
 contextFileName: string;
+cachedFilePath?: string | null;
+fileCopiedToClipboard?: boolean;
+fileClipboardError?: string | null;
+fileBundleStyle?: FileBundleStyle;
 stats: {
 fileCount: number;
 estimatedTokens: number;
 redactedSecretsCount: number;
 modelFit: ModelFitSummary;
+chatMode: ChatMode;
+attachedFiles: string[];
 };
 warnings: PackWarning[];
 }
