@@ -1,5 +1,6 @@
 import type { ModelFitLevel, ModelFitSummary, TaskPreset } from './types.js';
 
+export const APP_VERSION = '1.3.0';
 export const DEV_SESSION_TOKEN = 'chat2diff-dev-token';
 export const DEFAULT_PORT = 4310;
 export const MAX_FILE_SIZE_BYTES = 250 * 1024; // 250 KB per source file

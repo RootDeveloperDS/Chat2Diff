@@ -2,10 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import open from 'open';
 import { WebSocket, WebSocketServer } from 'ws';
-import { DEFAULT_PORT, DEV_SESSION_TOKEN } from '../shared/constants.js';
+import { APP_VERSION, DEFAULT_PORT, DEV_SESSION_TOKEN } from '../shared/constants.js';
 import type { WsEvent } from '../shared/types.js';
 import { createApp, isValidLocalHost, type ServerState, verifySessionToken } from './app.js';
 import { ClipboardWatcher } from './core/clipboardWatcher.js';
@@ -13,32 +14,91 @@ import { loadConfig, recordRecentRepo } from './core/configStore.js';
 import { cleanupCacheDir } from './core/fileClipboard.js';
 import { parseAndPreviewPatch } from './core/patchEngine.js';
 
+function getAppVersion(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  for (const rel of ['../package.json', '../../package.json']) {
+    try {
+      const pkgPath = path.resolve(currentDir, rel);
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+          name?: string;
+          version?: string;
+        };
+        if (pkg.name === 'chat2diff' && pkg.version) {
+          return pkg.version;
+        }
+      }
+    } catch {
+      // try next path
+    }
+  }
+  return APP_VERSION;
+}
+
+function printHelp(version: string): void {
+  console.log(`
+Chat2Diff v${version} — Use any AI chatbot safely on your local codebase.
+
+Usage:
+  npx chat2diff [directory] [options]
+
+Arguments:
+  directory          Target project folder (default: current working directory)
+
+Options:
+  -p, --port <num>   Localhost port to bind (default: ${DEFAULT_PORT}, auto-increments if busy)
+  --no-open          Start server without auto-opening your browser
+  --no-watch         Start with automatic clipboard listener paused
+  -v, --version      Print Chat2Diff version
+  -h, --help         Show this help message
+
+Examples:
+  npx chat2diff
+  npx chat2diff ./my-project
+  npx chat2diff --port 4500 --no-open
+`);
+}
+
 function parseCliArgs(argv: string[]): {
   targetDir: string;
   port: number;
   noOpen: boolean;
   noWatch: boolean;
   devMode: boolean;
+  showHelp: boolean;
+  showVersion: boolean;
 } {
   let targetDir = process.cwd();
   let port = Number(process.env.CHAT2DIFF_PORT) || DEFAULT_PORT;
   let noOpen = process.env.CHAT2DIFF_NO_OPEN === '1';
   let noWatch = false;
   let devMode = false;
+  let showHelp = false;
+  let showVersion = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--no-open') noOpen = true;
+    if (arg === '-h' || arg === '--help') showHelp = true;
+    else if (arg === '-v' || arg === '--version') showVersion = true;
+    else if (arg === '--no-open') noOpen = true;
     else if (arg === '--no-watch') noWatch = true;
     else if (arg === '--dev') devMode = true;
-    else if (arg === '--port' && argv[i + 1]) {
-      port = Number(argv[++i]) || DEFAULT_PORT;
-    } else if (!arg.startsWith('-')) {
+    else if ((arg === '-p' || arg === '--port') && argv[i + 1]) {
+      const parsedPort = Number(argv[++i]);
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+        console.error(`Error: Invalid port number. Use a value between 1 and 65535.`);
+        process.exit(1);
+      }
+      port = parsedPort;
+    } else if (arg.startsWith('-')) {
+      console.error(`Error: Unknown option "${arg}". Run "chat2diff --help" for usage.`);
+      process.exit(1);
+    } else {
       targetDir = path.resolve(arg);
     }
   }
 
-  return { targetDir, port, noOpen, noWatch, devMode };
+  return { targetDir, port, noOpen, noWatch, devMode, showHelp, showVersion };
 }
 
 function findAvailablePort(startPort: number): Promise<number> {
@@ -62,7 +122,17 @@ function findAvailablePort(startPort: number): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  const version = getAppVersion();
   const opts = parseCliArgs(process.argv.slice(2));
+
+  if (opts.showHelp) {
+    printHelp(version);
+    process.exit(0);
+  }
+  if (opts.showVersion) {
+    console.log(version);
+    process.exit(0);
+  }
 
   if (!fs.existsSync(opts.targetDir) || !fs.statSync(opts.targetDir).isDirectory()) {
     console.error(`Error: Directory not found: ${opts.targetDir}`);
@@ -147,7 +217,7 @@ async function main(): Promise<void> {
   const launchUrl = `http://127.0.0.1:${port}/#token=${sessionToken}`;
 
   console.log('');
-  console.log('  Chat2Diff is running locally');
+  console.log(`  Chat2Diff v${version} is running locally`);
   console.log(`  Project: ${serverState.repoPath}`);
   if (opts.devMode) {
     console.log(`  API:     http://127.0.0.1:${port}`);
@@ -162,11 +232,15 @@ async function main(): Promise<void> {
     await open(launchUrl).catch(() => {});
   }
 
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     watcher.stop();
     cleanupCacheDir();
     wss.close();
     httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1500).unref();
   };
 
   process.on('SIGINT', shutdown);

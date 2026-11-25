@@ -9,7 +9,7 @@ export interface SecretScanResult {
 const SECRET_RULES: Array<{ label: string; regex: RegExp }> = [
   { label: 'Private Key Block', regex: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
   { label: 'OpenAI / Provider API Key', regex: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g },
-  { label: 'Google API Key', regex: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+  { label: 'Google API Key', regex: /\bAIza[0-9A-Za-z_-]{35,}\b/g },
   { label: 'GitHub Token', regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b/g },
   { label: 'AWS Access Key', regex: /\bAKIA[0-9A-Z]{16}\b/g },
   { label: 'Groq API Key', regex: /\bgsk_[A-Za-z0-9]{24,}\b/g },

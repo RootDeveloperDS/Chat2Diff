@@ -1,16 +1,41 @@
 {
   "name": "chat2diff",
-  "version": "0.1.0",
-  "description": "Use any AI chatbot (ChatGPT, Gemini, Claude, DeepSeek) safely on your local codebase with visual diff review and 1-click undo.",
+  "version": "1.3.0",
+  "description": "Turn any AI chatbot (ChatGPT, Gemini, Claude, DeepSeek, Grok) into a safe, visual, multi-file local coding workbench with 1-click undo.",
   "type": "module",
   "license": "MIT",
+  "author": "Devansh Sharma <RootDeveloperDS>",
+  "homepage": "https://github.com/RootDeveloperDS/Chat2Diff#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RootDeveloperDS/Chat2Diff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RootDeveloperDS/Chat2Diff/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "diff",
+    "patch",
+    "chatgpt",
+    "gemini",
+    "claude",
+    "deepseek",
+    "developer-tools",
+    "local-first",
+    "cli",
+    "git-diff"
+  ],
   "bin": {
     "chat2diff": "./dist/cli.js"
   },
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "engines": {
     "node": ">=20.11.0"
@@ -20,9 +45,12 @@
     "dev:server": "tsx src/server/cli.ts --dev --no-open",
     "dev:client": "vite",
     "build": "vite build && tsup",
+    "prepack": "npm run build",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
@@ -30,13 +58,9 @@
     "diff": "^7.0.0",
     "hono": "^4.6.20",
     "ignore": "^7.0.3",
-    "lucide-react": "^0.471.0",
     "open": "^10.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
     "ws": "^8.18.0",
-    "zod": "^3.24.1",
-    "zustand": "^5.0.3"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -47,11 +71,15 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
+    "lucide-react": "^0.471.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "tailwindcss": "^4.0.0",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "zustand": "^5.0.3"
   }
 }

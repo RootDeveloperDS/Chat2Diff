@@ -30,6 +30,8 @@ function looksLikePatchText(text: string): boolean {
 export function App() {
   const {
     activeStep,
+    repoName,
+    socketConnected,
     selectedPaths,
     activeParse,
     appliedFilePaths,
@@ -108,6 +110,12 @@ export function App() {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <TopBar />
+
+      {repoName !== 'Loading...' && !socketConnected && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-1.5 text-center text-xs text-amber-800 dark:text-amber-200 shrink-0">
+          Local Chat2Diff server disconnected — re-run <code className="font-mono font-semibold">npx chat2diff</code> in your terminal to reconnect.
+        </div>
+      )}
 
       {/* Clean 2-Mode Navigation */}
       <nav className="border-b border-[var(--border-default)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">

@@ -263,7 +263,7 @@ function isPlausibleRepoPath(candidate: string): boolean {
   if (/[<>|?*\r\n]/.test(candidate)) return false;
   if (/\s{2,}/.test(candidate)) return false;
   if (candidate.split(/\s+/).length > 4) return false;
-  return candidate.includes('/') || candidate.includes('.');
+  return candidate.includes('/') || candidate.includes('.') || /^[A-Za-z0-9_-]{2,64}$/.test(candidate);
 }
 
 function normalizePunctuation(str: string): string {

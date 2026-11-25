@@ -1,4 +1,5 @@
 import { Clock, FolderGit2, FolderOpen, Layers, Moon, Radio, Sun, Zap } from 'lucide-react';
+import { APP_VERSION } from '../../shared/constants.js';
 import { useWorkbenchStore } from '../store/useWorkbenchStore.js';
 
 export function TopBar() {
@@ -26,6 +27,9 @@ export function TopBar() {
         <div className="flex items-center gap-2 font-bold text-base tracking-tight text-blue-600 dark:text-blue-400 shrink-0">
           <Layers className="h-5 w-5" />
           <span>Chat2Diff</span>
+          <span className="text-[11px] font-mono font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">
+            v{APP_VERSION}
+          </span>
         </div>
 
         <span className="text-[var(--border-default)]">/</span>
@@ -63,7 +67,7 @@ export function TopBar() {
           title={
             clipboardAvailable
               ? 'Toggle automatic detection when you copy an AI reply'
-              : 'Clipboard auto-watch unavailable; use manual paste in Step 3'
+              : 'Clipboard auto-watch unavailable; paste AI replies in Review & Apply'
           }
         >
           <Radio className={`h-3.5 w-3.5 ${clipboardWatchEnabled ? 'animate-pulse' : ''}`} />
